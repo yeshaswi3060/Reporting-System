@@ -57,11 +57,12 @@ export const ImagePage: React.FC = () => {
   };
   const [areas, setAreas] = useState<Area[]>([]);
   const [activeAreaKey, setActiveAreaKey] = useState<string | null>(null);
-  // Reserved for future drag/resize interactions
-  // const [isAreaDragging, setIsAreaDragging] = useState<boolean>(false);
-  // const areaDragModeRef = useRef<'move' | 'resize' | null>(null);
-  // const areaResizeHandleRef = useRef<'nw' | 'ne' | 'sw' | 'se' | null>(null);
-  // const areaDragOffsetRef = useRef<{ dx: number; dy: number }>({ dx: 0, dy: 0 });
+  // Drag/resize interactions for areas
+  const [isAreaDragging, setIsAreaDragging] = useState<boolean>(false);
+  const areaDragModeRef = useRef<'move' | 'resize' | null>(null);
+  const areaResizeHandleRef = useRef<'nw' | 'ne' | 'sw' | 'se' | null>(null);
+  const areaDragOffsetRef = useRef<{ dx: number; dy: number }>({ dx: 0, dy: 0 });
+  const [toolStage, setToolStage] = useState<1 | 2>(1);
 
   const typePrefix = (t: AreaType): string => ({ Bedroom: 'B', Bathroom: 'Ba', Hall: 'H', Study: 'S', Puja: 'P', Toilet: 'T' }[t]);
   const buildAreaLabel = (a: Area): string => {
@@ -392,6 +393,7 @@ export const ImagePage: React.FC = () => {
       setWallPoints([]);
       setWallCentroid(null);
       setProgressStage('idle');
+      setToolStage(1);
       // seed history at image load
       pushHistory();
     };
@@ -403,6 +405,36 @@ export const ImagePage: React.FC = () => {
   useEffect(() => {
     redraw();
   }, [northPos, showCenter, wallPoints, wallCentroid, showDirections]);
+
+  // Redraw when areas or selection changes so newly added rooms appear immediately
+  useEffect(() => {
+    redraw();
+  }, [areas, activeAreaKey]);
+
+  // Hit testing helpers for room areas
+  const hitTestArea = (x: number, y: number): Area | null => {
+    for (let i = areas.length - 1; i >= 0; i--) {
+      const a = areas[i];
+      const { x: ax, y: ay, w, h } = a.rect;
+      if (x >= ax && x <= ax + w && y >= ay && y <= ay + h) return a;
+    }
+    return null;
+  };
+
+  const hitTestResizeHandle = (a: Area, x: number, y: number): 'nw' | 'ne' | 'sw' | 'se' | null => {
+    const handleSize = 10;
+    const { x: ax, y: ay, w, h } = a.rect;
+    const handles = [
+      { key: 'nw' as const, hx: ax, hy: ay },
+      { key: 'ne' as const, hx: ax + w, hy: ay },
+      { key: 'sw' as const, hx: ax, hy: ay + h },
+      { key: 'se' as const, hx: ax + w, hy: ay + h },
+    ];
+    for (const hdl of handles) {
+      if (Math.abs(x - hdl.hx) <= handleSize && Math.abs(y - hdl.hy) <= handleSize) return hdl.key;
+    }
+    return null;
+  };
 
   return (
     <div className="h-screen w-screen overflow-hidden bg-gradient-to-br from-indigo-50 via-sky-50 to-blue-50">
@@ -482,6 +514,8 @@ export const ImagePage: React.FC = () => {
               <h2 className="text-sm font-semibold text-gray-800 mb-3">Tools</h2>
               <div className="space-y-2 text-sm text-gray-700">
                 <div className="flex items-center flex-wrap gap-2">
+                  {toolStage === 1 && (
+                    <>
                   <button
                     disabled={!hasImage || !(progressStage === 'idle' || progressStage === 'wall')}
                     onClick={() => {
@@ -497,6 +531,7 @@ export const ImagePage: React.FC = () => {
                   >
                     Get Wall
                   </button>
+                  
                   <button
                     disabled={!hasImage || !((progressStage === 'wall' && wallCentroid) || progressStage === 'center')}
                     onClick={() => {
@@ -584,6 +619,18 @@ export const ImagePage: React.FC = () => {
                   <button
                     type="button"
                     disabled={!hasImage}
+                    onClick={() => setToolStage(2)}
+                    className="w-full bg-teal-700 disabled:bg-gray-300 disabled:text-gray-600 hover:bg-teal-800 text-white px-3 py-2 rounded-lg font-medium transition-colors duration-200"
+                  >
+                    Next
+                  </button>
+                    </>
+                  )}
+                  {toolStage === 2 && (
+                    <>
+                  <button
+                    type="button"
+                    disabled={!hasImage}
                     onClick={() => {
                       const canvas = canvasRef.current;
                       if (!canvas) return;
@@ -637,35 +684,43 @@ export const ImagePage: React.FC = () => {
                       <input type="number" className="w-16 border rounded px-1 py-0.5 text-xs ml-2" value={numToilets} onChange={(e) => setNumToilets(Number(e.target.value || 0))} />
                     </label>
                   </div>
-                  <button
-                    type="button"
-                    disabled={!hasImage}
-                    onClick={() => setShowRoomPlanner(true)}
-                    className="w-full bg-teal-700 disabled:bg-gray-300 disabled:text-gray-600 hover:bg-teal-800 text-white px-3 py-2 rounded-lg font-medium transition-colors duration-200"
-                  >
-                    Next
-                  </button>
-                  {showRoomPlanner && (
-                    <div className="w-full grid grid-cols-2 gap-2 mt-2">
-                      {Array.from({ length: numBedrooms }).map((_, i) => (
-                        <button key={`Bedroom-${i+1}`} onClick={() => ensureArea('Bedroom', i+1)} className="bg-white border hover:bg-gray-50 border-gray-200 rounded-lg px-2 py-1 text-sm text-gray-800 text-left">Bedroom {i+1}</button>
-                      ))}
-                      {Array.from({ length: numBathrooms }).map((_, i) => (
-                        <button key={`Bathroom-${i+1}`} onClick={() => ensureArea('Bathroom', i+1)} className="bg-white border hover:bg-gray-50 border-gray-200 rounded-lg px-2 py-1 text-sm text-gray-800 text-left">Bathroom {i+1}</button>
-                      ))}
-                      {Array.from({ length: numHalls }).map((_, i) => (
-                        <button key={`Hall-${i+1}`} onClick={() => ensureArea('Hall', i+1)} className="bg-white border hover:bg-gray-50 border-gray-200 rounded-lg px-2 py-1 text-sm text-gray-800 text-left">Hall {i+1}</button>
-                      ))}
-                      {Array.from({ length: numStudyRooms }).map((_, i) => (
-                        <button key={`Study-${i+1}`} onClick={() => ensureArea('Study', i+1)} className="bg-white border hover:bg-gray-50 border-gray-200 rounded-lg px-2 py-1 text-sm text-gray-800 text-left">Study {i+1}</button>
-                      ))}
-                      {Array.from({ length: numPujaRooms }).map((_, i) => (
-                        <button key={`Puja-${i+1}`} onClick={() => ensureArea('Puja', i+1)} className="bg-white border hover:bg-gray-50 border-gray-200 rounded-lg px-2 py-1 text-sm text-gray-800 text-left">Puja House {i+1}</button>
-                      ))}
-                      {Array.from({ length: numToilets }).map((_, i) => (
-                        <button key={`Toilet-${i+1}`} onClick={() => ensureArea('Toilet', i+1)} className="bg-white border hover:bg-gray-50 border-gray-200 rounded-lg px-2 py-1 text-sm text-gray-800 text-left">Toilet {i+1}</button>
-                      ))}
-                    </div>
+                  <div className="w-full grid grid-cols-2 gap-2 mt-2">
+                    {Array.from({ length: numBedrooms }).map((_, i) => (
+                      <button key={`Bedroom-${i+1}`} onClick={() => ensureArea('Bedroom', i+1)} className="bg-white border hover:bg-gray-50 border-gray-200 rounded-lg px-2 py-1 text-sm text-gray-800 text-left">Bedroom {i+1}</button>
+                    ))}
+                    {Array.from({ length: numBathrooms }).map((_, i) => (
+                      <button key={`Bathroom-${i+1}`} onClick={() => ensureArea('Bathroom', i+1)} className="bg-white border hover:bg-gray-50 border-gray-200 rounded-lg px-2 py-1 text-sm text-gray-800 text-left">Bathroom {i+1}</button>
+                    ))}
+                    {Array.from({ length: numHalls }).map((_, i) => (
+                      <button key={`Hall-${i+1}`} onClick={() => ensureArea('Hall', i+1)} className="bg-white border hover:bg-gray-50 border-gray-200 rounded-lg px-2 py-1 text-sm text-gray-800 text-left">Hall {i+1}</button>
+                    ))}
+                    {Array.from({ length: numStudyRooms }).map((_, i) => (
+                      <button key={`Study-${i+1}`} onClick={() => ensureArea('Study', i+1)} className="bg-white border hover:bg-gray-50 border-gray-200 rounded-lg px-2 py-1 text-sm text-gray-800 text-left">Study {i+1}</button>
+                    ))}
+                    {Array.from({ length: numPujaRooms }).map((_, i) => (
+                      <button key={`Puja-${i+1}`} onClick={() => ensureArea('Puja', i+1)} className="bg-white border hover:bg-gray-50 border-gray-200 rounded-lg px-2 py-1 text-sm text-gray-800 text-left">Puja House {i+1}</button>
+                    ))}
+                    {Array.from({ length: numToilets }).map((_, i) => (
+                      <button key={`Toilet-${i+1}`} onClick={() => ensureArea('Toilet', i+1)} className="bg-white border hover:bg-gray-50 border-gray-200 rounded-lg px-2 py-1 text-sm text-gray-800 text-left">Toilet {i+1}</button>
+                    ))}
+                  </div>
+                  <div className="flex gap-2 w-full mt-2">
+                    <button
+                      type="button"
+                      className="flex-1 bg-white border border-gray-300 text-gray-800 px-3 py-2 rounded-lg font-medium hover:bg-gray-50"
+                      onClick={() => setToolStage(1)}
+                    >
+                      Back
+                    </button>
+                    <button
+                      type="button"
+                      className="flex-1 bg-teal-700 text-white px-3 py-2 rounded-lg font-medium hover:bg-teal-800"
+                      onClick={() => setShowRoomPlanner(true)}
+                    >
+                      Start Placing
+                    </button>
+                  </div>
+                    </>
                   )}
                 </div>
               </div>
@@ -688,10 +743,10 @@ export const ImagePage: React.FC = () => {
                     // If North not set yet but stage is north, place it at click
                     const canvas = canvasRef.current;
                     if (!canvas) return;
+                    const rect = canvas.getBoundingClientRect();
+                    const x = e.clientX - rect.left;
+                    const y = e.clientY - rect.top;
                     if (progressStage === 'north' && !northFixed) {
-                      const rect = canvas.getBoundingClientRect();
-                      const x = e.clientX - rect.left;
-                      const y = e.clientY - rect.top;
                       if (!northPos) {
                         setNorthPos({ x, y });
                         pushHistory();
@@ -702,21 +757,77 @@ export const ImagePage: React.FC = () => {
                       setIsDraggingNorth(true);
                       return;
                     }
+                    // Stage 2 area interactions
+                    if (toolStage === 2 && areas.length > 0) {
+                      const a = hitTestArea(x, y);
+                      if (a) {
+                        setActiveAreaKey(a.key);
+                        const handle = hitTestResizeHandle(a, x, y);
+                        if (handle) {
+                          areaDragModeRef.current = 'resize';
+                          areaResizeHandleRef.current = handle;
+                          setIsAreaDragging(true);
+                          pushHistory();
+                          return;
+                        }
+                        areaDragModeRef.current = 'move';
+                        areaResizeHandleRef.current = null;
+                        areaDragOffsetRef.current = { dx: x - a.rect.x, dy: y - a.rect.y };
+                        setIsAreaDragging(true);
+                        pushHistory();
+                        return;
+                      } else {
+                        setActiveAreaKey(null);
+                      }
+                    }
                   }}
                   onMouseMove={(e) => {
-                    if (!isDraggingNorth || !baseImg || !northPos) return;
                     const canvas = canvasRef.current;
                     if (!canvas) return;
                     const rect = canvas.getBoundingClientRect();
-                    const x = e.clientX - rect.left - dragOffsetRef.current.dx;
-                    const y = e.clientY - rect.top - dragOffsetRef.current.dy;
-                    const clampedX = Math.max(0, Math.min(baseImg.width, x));
-                    const clampedY = Math.max(0, Math.min(baseImg.height, y));
-                    setNorthPos({ x: clampedX, y: clampedY });
-                    redraw();
+                    const mx = e.clientX - rect.left;
+                    const my = e.clientY - rect.top;
+                    if (isDraggingNorth && baseImg && northPos) {
+                      const x = mx - dragOffsetRef.current.dx;
+                      const y = my - dragOffsetRef.current.dy;
+                      const clampedX = Math.max(0, Math.min(baseImg.width, x));
+                      const clampedY = Math.max(0, Math.min(baseImg.height, y));
+                      setNorthPos({ x: clampedX, y: clampedY });
+                      redraw();
+                      return;
+                    }
+                    if (toolStage === 2 && isAreaDragging && activeAreaKey) {
+                      setAreas(prev => prev.map(area => {
+                        if (area.key !== activeAreaKey) return area;
+                        const r = { ...area.rect };
+                        if (areaDragModeRef.current === 'move') {
+                          r.x = Math.round(mx - areaDragOffsetRef.current.dx);
+                          r.y = Math.round(my - areaDragOffsetRef.current.dy);
+                        } else if (areaDragModeRef.current === 'resize' && areaResizeHandleRef.current) {
+                          const minW = 30;
+                          const minH = 20;
+                          switch (areaResizeHandleRef.current) {
+                            case 'nw': r.w += r.x - mx; r.h += r.y - my; r.x = mx; r.y = my; break;
+                            case 'ne': r.w = mx - r.x; r.h += r.y - my; r.y = my; break;
+                            case 'sw': r.w += r.x - mx; r.x = mx; r.h = my - r.y; break;
+                            case 'se': r.w = mx - r.x; r.h = my - r.y; break;
+                          }
+                          r.w = Math.max(minW, r.w);
+                          r.h = Math.max(minH, r.h);
+                        }
+                        return { ...area, rect: r };
+                      }));
+                      redraw();
+                    }
                   }}
-                  onMouseUp={() => { if (isDraggingNorth) { setIsDraggingNorth(false); pushHistory(); } }}
-                  onMouseLeave={() => { if (isDraggingNorth) setIsDraggingNorth(false); }}
+                  onMouseUp={() => {
+                    if (isDraggingNorth) { setIsDraggingNorth(false); pushHistory(); }
+                    if (isAreaDragging) { setIsAreaDragging(false); areaDragModeRef.current = null; areaResizeHandleRef.current = null; pushHistory(); }
+                  }}
+                  onMouseLeave={() => {
+                    if (isDraggingNorth) setIsDraggingNorth(false);
+                    if (isAreaDragging) { setIsAreaDragging(false); areaDragModeRef.current = null; areaResizeHandleRef.current = null; }
+                  }}
                 />
                 {hasImage && (
                   <div className="absolute left-3 bottom-3 text-gray-700/70 text-xs bg-white/70 px-2 py-0.5 rounded border border-white/60 select-none">
