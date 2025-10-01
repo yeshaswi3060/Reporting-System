@@ -1,16 +1,24 @@
-import { initializeApp } from 'firebase/app';
-import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, type User } from 'firebase/auth';
-import { getFirestore, doc, setDoc, getDoc, collection, addDoc } from 'firebase/firestore';
+import { initializeApp, type FirebaseApp } from 'firebase/app';
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut as fbSignOut, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, type User, type Auth } from 'firebase/auth';
+import { getFirestore, doc, setDoc, getDoc, collection, addDoc, type Firestore } from 'firebase/firestore';
 import firebaseConfig from '../config/firebase';
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
+// Initialize Firebase safely to avoid hard crashes when env vars are missing in prod
+let app: FirebaseApp | null = null;
+let auth: Auth | null = null;
+let db: Firestore | null = null;
+try {
+  app = initializeApp(firebaseConfig as any);
+  auth = getAuth(app);
+  db = getFirestore(app);
+} catch (e) {
+  app = null;
+  auth = null;
+  db = null;
+  // Swallow init errors; consumers should handle missing instances gracefully
+}
 
-// Initialize Firebase Authentication and get a reference to the service
-export const auth = getAuth(app);
-
-// Initialize Cloud Firestore and get a reference to the service
-export const db = getFirestore(app);
+export { auth, db };
 
 // Google Auth Provider
 const googleProvider = new GoogleAuthProvider();
@@ -45,6 +53,7 @@ export const authService = {
   
   // Sign up with email and password
   async signUp(email: string, password: string, userData: Partial<AppUser>): Promise<AppUser> {
+    if (!auth || !db) throw new Error('Firebase is not configured. Please set VITE_FIREBASE_* env vars.');
     try {
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
@@ -82,6 +91,7 @@ export const authService = {
 
   // Sign in with email and password
   async signIn(email: string, password: string): Promise<AppUser> {
+    if (!auth || !db) throw new Error('Firebase is not configured. Please set VITE_FIREBASE_* env vars.');
     try {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
@@ -126,6 +136,7 @@ export const authService = {
 
   // Sign in with Google
   async signInWithGoogle(): Promise<AppUser> {
+    if (!auth || !db) throw new Error('Firebase is not configured. Please set VITE_FIREBASE_* env vars.');
     try {
       const result = await signInWithPopup(auth, googleProvider);
       const user = result.user;
@@ -208,8 +219,9 @@ export const authService = {
 
   // Sign out
   async signOut(): Promise<void> {
+    if (!auth) return;
     try {
-      await signOut(auth);
+      await fbSignOut(auth);
     } catch (error: any) {
       throw new Error(error.message);
     }
@@ -217,11 +229,12 @@ export const authService = {
 
   // Get current user
   getCurrentUser(): User | null {
-    return auth.currentUser;
+    return auth?.currentUser || null;
   },
 
   // Update user data
   async updateUserData(uid: string, userData: Partial<AppUser>): Promise<void> {
+    if (!db) throw new Error('Firebase is not configured. Please set VITE_FIREBASE_* env vars.');
     try {
       const userRef = doc(db, 'users', uid);
       await setDoc(userRef, {
@@ -235,6 +248,7 @@ export const authService = {
 
   // Get user data by UID
   async getUserData(uid: string): Promise<AppUser | null> {
+    if (!db) return null;
     try {
       const userDoc = await getDoc(doc(db, 'users', uid));
       if (userDoc.exists()) {
