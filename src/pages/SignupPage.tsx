@@ -5,24 +5,59 @@ interface SignupPageProps {
   onSwitchToLogin?: () => void;
 }
 
+type FormData = {
+  firstName: string;
+  lastName: string;
+  email: string;
+  password: string;
+  confirmPassword: string;
+  dateOfBirth: string;
+  gender: string;
+  address: string;
+  city: string;
+  state: string;
+  zipCode: string;
+  country: string;
+  occupation: string;
+  company: string;
+  website: string;
+  bio: string;
+  interests: string;
+  newsletter: boolean;
+};
+
 export const SignupPage: React.FC<SignupPageProps> = ({ onSwitchToLogin }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const { signUp, signInWithGoogle } = useAuth();
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<FormData>({
     firstName: '',
     lastName: '',
     email: '',
     password: '',
-    confirmPassword: ''
+    confirmPassword: '',
+    dateOfBirth: '',
+    gender: '',
+    address: '',
+    city: '',
+    state: '',
+    zipCode: '',
+    country: '',
+    occupation: '',
+    company: '',
+    website: '',
+    bio: '',
+    interests: '',
+    newsletter: false,
   });
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }));
+  const handleInputChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
+  ) => {
+    const target = e.target as HTMLInputElement;
+    const { name, type } = target;
+    const value = type === 'checkbox' ? target.checked : target.value;
+    setFormData(prev => ({ ...prev, [name]: value as any }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
