@@ -3,7 +3,7 @@ import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { SocialAuthButton } from './SocialAuthButton';
 import { useAuth } from '../../contexts/AuthContext';
-import { LoginCredentials, SignupCredentials, SocialAuthProvider } from '../../types/auth';
+import type { LoginCredentials, SignupCredentials, SocialAuthProvider } from '../../types/auth';
 
 const socialProviders: SocialAuthProvider[] = [
   { name: 'google', label: 'Google', icon: '', color: '#4285F4' },
@@ -15,7 +15,7 @@ export const AuthForm: React.FC = () => {
   const [isLogin, setIsLogin] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
-  const { login, signup, socialLogin } = useAuth();
+  const { signIn, signUp, signInWithGoogle } = useAuth();
 
   const [formData, setFormData] = useState({
     name: '',
@@ -44,7 +44,7 @@ export const AuthForm: React.FC = () => {
           email: formData.email,
           password: formData.password
         };
-        await login(credentials);
+        await signIn(credentials.email, credentials.password);
       } else {
         if (formData.password !== formData.confirmPassword) {
           setError('Passwords do not match');
@@ -56,7 +56,7 @@ export const AuthForm: React.FC = () => {
           password: formData.password,
           confirmPassword: formData.confirmPassword
         };
-        await signup(credentials);
+        await signUp(credentials.email, credentials.password, { firstName: credentials.name.split(' ')[0] || '', lastName: credentials.name.split(' ').slice(1).join(' ') || '' });
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
@@ -69,7 +69,11 @@ export const AuthForm: React.FC = () => {
     setError('');
     setIsLoading(true);
     try {
-      await socialLogin(provider);
+      if (provider === 'google') {
+        await signInWithGoogle();
+      } else {
+        throw new Error(`${provider} login not yet supported`);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Social login failed');
     } finally {

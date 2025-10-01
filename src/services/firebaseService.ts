@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, GoogleAuthProvider, signInWithPopup, User } from 'firebase/auth';
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, type User } from 'firebase/auth';
 import { getFirestore, doc, setDoc, getDoc, collection, addDoc } from 'firebase/firestore';
 import firebaseConfig from '../config/firebase';
 
@@ -164,7 +164,45 @@ export const authService = {
         return appUser;
       }
     } catch (error: any) {
-      throw new Error(error.message);
+      // Fallback to redirect if popup is blocked
+      if (error?.code === 'auth/popup-blocked' || error?.code === 'auth/popup-closed-by-user') {
+        await signInWithRedirect(auth, googleProvider);
+        // After redirect back, handle result
+        const redirectResult = await getRedirectResult(auth);
+        if (redirectResult?.user) {
+          const user = redirectResult.user;
+          const userDoc = await getDoc(doc(db, 'users', user.uid));
+          if (userDoc.exists()) {
+            return userDoc.data() as AppUser;
+          } else {
+            const appUser: AppUser = {
+              uid: user.uid,
+              email: user.email || '',
+              firstName: user.displayName?.split(' ')[0] || '',
+              lastName: user.displayName?.split(' ').slice(1).join(' ') || '',
+              phoneNumber: user.phoneNumber || '',
+              dateOfBirth: '',
+              gender: '',
+              address: '',
+              city: '',
+              state: '',
+              zipCode: '',
+              country: '',
+              occupation: '',
+              company: '',
+              website: '',
+              bio: '',
+              interests: '',
+              newsletter: false,
+              createdAt: new Date(),
+              updatedAt: new Date()
+            };
+            await setDoc(doc(db, 'users', user.uid), appUser);
+            return appUser;
+          }
+        }
+      }
+      throw new Error(error?.message || 'Google sign-in failed');
     }
   },
 

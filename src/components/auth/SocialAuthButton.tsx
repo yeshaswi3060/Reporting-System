@@ -1,6 +1,6 @@
 import React from 'react';
 import { Button } from '../ui/Button';
-import { SocialAuthProvider } from '../../types/auth';
+import type { SocialAuthProvider } from '../../types/auth';
 
 interface SocialAuthButtonProps {
   provider: SocialAuthProvider;
