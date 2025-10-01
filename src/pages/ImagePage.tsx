@@ -48,7 +48,7 @@ export const ImagePage: React.FC = () => {
   const [numStudyRooms, setNumStudyRooms] = useState<number>(0);
   const [numPujaRooms, setNumPujaRooms] = useState<number>(0);
   const [numToilets, setNumToilets] = useState<number>(0);
-  const [showRoomPlanner, setShowRoomPlanner] = useState<boolean>(false);
+  const [, setShowRoomPlanner] = useState<boolean>(false);
   type AreaType = 'Bedroom' | 'Bathroom' | 'Hall' | 'Study' | 'Puja' | 'Toilet' | 'GasStove' | 'DiningTable' | 'ToiletFixture';
   type Area = {
     key: string; // e.g., Bedroom-1
@@ -469,34 +469,9 @@ export const ImagePage: React.FC = () => {
     return null;
   };
 
-  const compassLabels = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
-  const getCompassLabelForPoint = (x: number, y: number): string | null => {
-    if (!northPos || (!baseImg && !wallCentroid)) return null;
-    const centerX = wallCentroid ? wallCentroid.x : Math.round((baseImg?.width || 0) / 2);
-    const centerY = wallCentroid ? wallCentroid.y : Math.round((baseImg?.height || 0) / 2);
-    const northAngle = Math.atan2(northPos.y - centerY, northPos.x - centerX);
-    const ang = Math.atan2(y - centerY, x - centerX);
-    let rel = ang - northAngle;
-    while (rel < 0) rel += Math.PI * 2;
-    while (rel >= Math.PI * 2) rel -= Math.PI * 2;
-    const idx = Math.round(rel / ((Math.PI * 2) / 16)) % 16;
-    return compassLabels[idx];
-  };
+  // Compass labels retained for reference in math; unused variable removed to satisfy TS
 
-  const mapAreaTypeToSheetKey = (t: AreaType): string => {
-    switch (t) {
-      case 'Bedroom': return 'bedroom';
-      case 'Bathroom': return 'toilet'; // use toilet guidance for bathrooms if dedicated column absent
-      case 'Toilet': return 'toilet';
-      case 'ToiletFixture': return 'toilet';
-      case 'DiningTable': return 'dinning_hall'; // matches sheet header spelling
-      case 'Hall': return 'drawing_room' in guidance ? 'drawing_room' : 'hall';
-      case 'Study': return 'study_room';
-      case 'Puja': return 'temple';
-      case 'GasStove': return 'kitchen';
-      default: return String(t).toLowerCase();
-    }
-  };
+  // mapping helper removed (we resolve per-case in report generation)
 
   return (
     <div className="h-screen w-screen overflow-hidden bg-gradient-to-br from-indigo-50 via-sky-50 to-blue-50">
@@ -881,12 +856,7 @@ export const ImagePage: React.FC = () => {
                             const idx = Math.round(rel / ((Math.PI*2)/16)) % 16;
                             return labels[idx];
                           };
-                          const rows = areas.map(a => {
-                            const cx = a.rect.x + a.rect.w/2;
-                            const cy = a.rect.y + a.rect.h/2;
-                            const dir = northPos ? toDirection(cx, cy) : '-';
-                            return `<tr><td>${a.key}</td><td>${a.type}</td><td>${dir}</td></tr>`;
-                          }).join('');
+                          // legacy rows removed (not used in card summary)
                           const css = `@page { size: A4 portrait; margin: 22mm; }
                           *{box-sizing:border-box}
                           body{font-family: 'Inter', 'Source Sans 3', ui-sans-serif, system-ui, Segoe UI, Roboto, Helvetica, Arial; color:#1C2534;}
@@ -931,10 +901,7 @@ export const ImagePage: React.FC = () => {
                           const countsCards = Object.entries(counts).map(([k,v])=>`<div class=\"card\"><div class=\"num\">${v}</div><div class=\"label\">${k}</div></div>`).join('');
                           const summaryRows = areas.map(a=>{
                             const cx = a.rect.x + a.rect.w/2; const cy = a.rect.y + a.rect.h/2; const dir = northPos ? toDirection(cx,cy) : '-';
-                            let keyDir = '-';
-                            if (a.type === 'GasStove') keyDir = 'Hob';
-                            if (a.type === 'ToiletFixture') keyDir = 'WC';
-                            if (a.type === 'DiningTable') keyDir = 'Table';
+                            // internal key role removed from output
                             // guidance lookup
                             const roomType = (function(){
                               switch (a.type as AreaType) {
@@ -951,8 +918,7 @@ export const ImagePage: React.FC = () => {
                             })();
                             const entry = roomType && dir && guidance[roomType] && guidance[roomType][dir] ? guidance[roomType][dir] : null;
                             // We will not show zone/element if you don't need; keep for internal logic only
-                            const zone = entry ? entry.zone : '';
-                            const element = entry ? entry.element : '';
+                            // zone/element kept internal, not shown
                             const effectsList = (entry?.effect || []).map((t:string)=>`<li>${t}</li>`).join('');
                             const remediesList = (entry?.remedies_primary || []).map((t:string)=>`<li>${t}</li>`).join('');
                             return `
