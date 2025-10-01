@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { loadGuidanceFromOutputCsv, loadGuidanceFromLocal } from '../utils/guidanceLoader';
+import type { GuidanceMap } from '../types/guidance';
 
 function getImageUrlFromHash(): string | null {
   try {
@@ -47,13 +49,17 @@ export const ImagePage: React.FC = () => {
   const [numPujaRooms, setNumPujaRooms] = useState<number>(0);
   const [numToilets, setNumToilets] = useState<number>(0);
   const [showRoomPlanner, setShowRoomPlanner] = useState<boolean>(false);
-  type AreaType = 'Bedroom' | 'Bathroom' | 'Hall' | 'Study' | 'Puja' | 'Toilet';
+  type AreaType = 'Bedroom' | 'Bathroom' | 'Hall' | 'Study' | 'Puja' | 'Toilet' | 'GasStove' | 'DiningTable' | 'ToiletFixture';
   type Area = {
     key: string; // e.g., Bedroom-1
     type: AreaType;
     color: string; // rgba string
     rect: { x: number; y: number; w: number; h: number };
     fixed: boolean;
+    stageIndex: number; // at which stage it was created
+    meta?: {
+      seatDirection?: string; // for ToiletFixture: one of 16 directions
+    };
   };
   const [areas, setAreas] = useState<Area[]>([]);
   const [activeAreaKey, setActiveAreaKey] = useState<string | null>(null);
@@ -62,9 +68,15 @@ export const ImagePage: React.FC = () => {
   const areaDragModeRef = useRef<'move' | 'resize' | null>(null);
   const areaResizeHandleRef = useRef<'nw' | 'ne' | 'sw' | 'se' | null>(null);
   const areaDragOffsetRef = useRef<{ dx: number; dy: number }>({ dx: 0, dy: 0 });
-  const [toolStage, setToolStage] = useState<1 | 2>(1);
+  const [toolStage, setToolStage] = useState<1 | 2 | 3>(1);
+  const [numGasStoves, setNumGasStoves] = useState<number>(0);
+  const [numToiletFixtures, setNumToiletFixtures] = useState<number>(0);
+  const [numDiningTables, setNumDiningTables] = useState<number>(0);
+  const [guidanceUrl, setGuidanceUrl] = useState<string>('');
+  const [guidance, setGuidance] = useState<GuidanceMap>({});
+  const [guidanceStatus, setGuidanceStatus] = useState<string>('');
 
-  const typePrefix = (t: AreaType): string => ({ Bedroom: 'B', Bathroom: 'Ba', Hall: 'H', Study: 'S', Puja: 'P', Toilet: 'T' }[t]);
+  const typePrefix = (t: AreaType): string => ({ Bedroom: 'B', Bathroom: 'Ba', Hall: 'H', Study: 'S', Puja: 'P', Toilet: 'T', GasStove: 'GS', DiningTable: 'DT', ToiletFixture: 'TF' }[t]);
   const buildAreaLabel = (a: Area): string => {
     const parts = a.key.split('-');
     return `${typePrefix(a.type)}${parts[1] || ''}`;
@@ -76,7 +88,10 @@ export const ImagePage: React.FC = () => {
       Hall: 'rgba(234,179,8,0.25)',
       Study: 'rgba(59,130,246,0.25)',
       Puja: 'rgba(236,72,153,0.25)',
-      Toilet: 'rgba(239,68,68,0.25)'
+      Toilet: 'rgba(239,68,68,0.25)',
+      GasStove: 'rgba(20,184,166,0.25)',
+      DiningTable: 'rgba(168,85,247,0.25)',
+      ToiletFixture: 'rgba(251,146,60,0.25)'
     }[t]
   );
   const ensureArea = (type: AreaType, index: number) => {
@@ -94,6 +109,8 @@ export const ImagePage: React.FC = () => {
         color: typeColor(type),
         rect: { x: Math.round(w / 2 - rectW / 2), y: Math.round(h / 2 - rectH / 2), w: rectW, h: rectH },
         fixed: false,
+        stageIndex: toolStage,
+        meta: {},
       };
       return [...prev, newArea];
     });
@@ -176,6 +193,15 @@ export const ImagePage: React.FC = () => {
     const cx = cxSum / (3 * areaTwice);
     const cy = cySum / (3 * areaTwice);
     return { x: Math.round(cx), y: Math.round(cy) };
+  };
+
+  // Ensure points are in a consistent clockwise order before centroid computation
+  const orderPointsClockwise = (points: Array<{ x: number; y: number }>): Array<{ x: number; y: number }> => {
+    if (points.length <= 2) return points;
+    const avg = points.reduce((acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }), { x: 0, y: 0 });
+    const cx = avg.x / points.length;
+    const cy = avg.y / points.length;
+    return [...points].sort((a, b) => Math.atan2(a.y - cy, a.x - cx) - Math.atan2(b.y - cy, b.x - cx));
   };
 
   const drawBase = (img: HTMLImageElement) => {
@@ -331,13 +357,20 @@ export const ImagePage: React.FC = () => {
       ctx.restore();
     }
 
-    // Draw room planner areas on top of everything else
+    // Draw room/equipment areas on top of everything else
     if (areas.length > 0) {
       ctx.save();
       for (const a of areas) {
         const { x, y, w, h } = a.rect;
+        // dim older stage areas when current stage > their stage
+        const isDimmed = a.stageIndex < toolStage;
+        const rgba = a.color.replace(/rgba\(([^)]+)\)/, (_match: string, inner: string) => {
+          const parts = inner.split(',').map((s: string) => s.trim());
+          const alpha = Math.max(0.1, Math.min(1, (parseFloat(parts[3] || '0.25')) * (isDimmed ? 0.5 : 1)));
+          return `rgba(${parts[0]}, ${parts[1]}, ${parts[2]}, ${alpha})`;
+        });
         // fill
-        ctx.fillStyle = a.color;
+        ctx.fillStyle = rgba;
         ctx.fillRect(x, y, w, h);
         // border
         ctx.lineWidth = activeAreaKey === a.key ? 3 : 1.5;
@@ -434,6 +467,35 @@ export const ImagePage: React.FC = () => {
       if (Math.abs(x - hdl.hx) <= handleSize && Math.abs(y - hdl.hy) <= handleSize) return hdl.key;
     }
     return null;
+  };
+
+  const compassLabels = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+  const getCompassLabelForPoint = (x: number, y: number): string | null => {
+    if (!northPos || (!baseImg && !wallCentroid)) return null;
+    const centerX = wallCentroid ? wallCentroid.x : Math.round((baseImg?.width || 0) / 2);
+    const centerY = wallCentroid ? wallCentroid.y : Math.round((baseImg?.height || 0) / 2);
+    const northAngle = Math.atan2(northPos.y - centerY, northPos.x - centerX);
+    const ang = Math.atan2(y - centerY, x - centerX);
+    let rel = ang - northAngle;
+    while (rel < 0) rel += Math.PI * 2;
+    while (rel >= Math.PI * 2) rel -= Math.PI * 2;
+    const idx = Math.round(rel / ((Math.PI * 2) / 16)) % 16;
+    return compassLabels[idx];
+  };
+
+  const mapAreaTypeToSheetKey = (t: AreaType): string => {
+    switch (t) {
+      case 'Bedroom': return 'bedroom';
+      case 'Bathroom': return 'toilet'; // use toilet guidance for bathrooms if dedicated column absent
+      case 'Toilet': return 'toilet';
+      case 'ToiletFixture': return 'toilet';
+      case 'DiningTable': return 'dinning_hall'; // matches sheet header spelling
+      case 'Hall': return 'drawing_room' in guidance ? 'drawing_room' : 'hall';
+      case 'Study': return 'study_room';
+      case 'Puja': return 'temple';
+      case 'GasStove': return 'kitchen';
+      default: return String(t).toLowerCase();
+    }
   };
 
   return (
@@ -715,11 +777,258 @@ export const ImagePage: React.FC = () => {
                     <button
                       type="button"
                       className="flex-1 bg-teal-700 text-white px-3 py-2 rounded-lg font-medium hover:bg-teal-800"
-                      onClick={() => setShowRoomPlanner(true)}
+                      onClick={() => setToolStage(3)}
                     >
-                      Start Placing
+                      Next
                     </button>
                   </div>
+                    </>
+                  )}
+                  {toolStage === 3 && (
+                    <>
+                    <div className="w-full bg-white/70 border border-gray-200 rounded-lg p-2">
+                      <div className="text-xs text-gray-700 mb-1">Guidance Source (Output CSV URL)</div>
+                      <div className="flex flex-col gap-2">
+                        <div className="flex gap-2">
+                          <input
+                            value={guidanceUrl}
+                            onChange={(e) => setGuidanceUrl(e.target.value)}
+                            placeholder="https://docs.google.com/spreadsheets/.../export?format=csv&gid=..."
+                            className="min-w-0 flex-1 border rounded px-2 py-1 text-xs"
+                          />
+                          <button
+                            className="shrink-0 bg-gray-800 text-white px-2 py-1 rounded text-xs"
+                            onClick={async () => {
+                              try {
+                                setGuidanceStatus('Loading...');
+                                const map = await loadGuidanceFromOutputCsv(guidanceUrl);
+                                setGuidance(map);
+                                const roomTypes = Object.keys(map);
+                                const dirsCount = roomTypes.reduce((acc, rt) => acc + Object.keys(map[rt] || {}).length, 0);
+                                setGuidanceStatus(`Loaded ${roomTypes.length} types, ${dirsCount} directions`);
+                              } catch {}
+                            }}
+                          >
+                            Load
+                          </button>
+                        </div>
+                        <button
+                          className="w-full bg-white border border-gray-300 text-gray-800 px-2 py-1 rounded text-xs"
+                          onClick={async () => {
+                            setGuidanceStatus('Loading local data...');
+                            const map = await loadGuidanceFromLocal();
+                            setGuidance(map);
+                            const roomTypes = Object.keys(map);
+                            const dirsCount = roomTypes.reduce((acc, rt) => acc + Object.keys(map[rt] || {}).length, 0);
+                            setGuidanceStatus(`Loaded ${roomTypes.length} local types, ${dirsCount} directions`);
+                          }}
+                        >
+                          Load Local
+                        </button>
+                      </div>
+                      {guidanceStatus && <div className="text-[11px] text-gray-600 mt-1">{guidanceStatus}</div>}
+                    </div>
+                    <div className="w-full grid grid-cols-2 gap-2 mt-2">
+                      <label className="flex items-center justify-between bg-white border border-gray-200 rounded-lg px-2 py-1 text-xs text-gray-700">
+                        <span>Gas Stoves</span>
+                        <input type="number" className="w-16 border rounded px-1 py-0.5 text-xs ml-2" value={numGasStoves} onChange={(e) => setNumGasStoves(Number(e.target.value || 0))} />
+                      </label>
+                      <label className="flex items-center justify-between bg-white border border-gray-200 rounded-lg px-2 py-1 text-xs text-gray-700">
+                        <span>Toilet Fixtures</span>
+                        <input type="number" className="w-16 border rounded px-1 py-0.5 text-xs ml-2" value={numToiletFixtures} onChange={(e) => setNumToiletFixtures(Number(e.target.value || 0))} />
+                      </label>
+                      <label className="flex items-center justify-between bg-white border border-gray-200 rounded-lg px-2 py-1 text-xs text-gray-700">
+                        <span>Dining Tables</span>
+                        <input type="number" className="w-16 border rounded px-1 py-0.5 text-xs ml-2" value={numDiningTables} onChange={(e) => setNumDiningTables(Number(e.target.value || 0))} />
+                      </label>
+                    </div>
+                    <div className="w-full grid grid-cols-2 gap-2 mt-2">
+                      {Array.from({ length: numGasStoves }).map((_, i) => (
+                        <button key={`GasStove-${i+1}`} onClick={() => ensureArea('GasStove', i+1)} className="bg-white border hover:bg-gray-50 border-gray-200 rounded-lg px-2 py-1 text-sm text-gray-800 text-left">Gas Stove {i+1}</button>
+                      ))}
+                      {Array.from({ length: numToiletFixtures }).map((_, i) => (
+                        <button key={`ToiletFixture-${i+1}`} onClick={() => ensureArea('ToiletFixture', i+1)} className="bg-white border hover:bg-gray-50 border-gray-200 rounded-lg px-2 py-1 text-sm text-gray-800 text-left">Toilet {i+1}</button>
+                      ))}
+                      {Array.from({ length: numDiningTables }).map((_, i) => (
+                        <button key={`DiningTable-${i+1}`} onClick={() => ensureArea('DiningTable', i+1)} className="bg-white border hover:bg-gray-50 border-gray-200 rounded-lg px-2 py-1 text-sm text-gray-800 text-left">Dining Table {i+1}</button>
+                      ))}
+                    </div>
+                    <div className="flex gap-2 w-full mt-2">
+                      <button
+                        type="button"
+                        className="flex-1 bg-white border border-gray-300 text-gray-800 px-3 py-2 rounded-lg font-medium hover:bg-gray-50"
+                        onClick={() => setToolStage(2)}
+                      >
+                        Back
+                      </button>
+                      <button
+                        type="button"
+                        className="flex-1 bg-rose-700 text-white px-3 py-2 rounded-lg font-medium hover:bg-rose-800"
+                        onClick={() => {
+                          // generate printable report
+                          const reportWin = window.open('', '_blank');
+                          if (!reportWin) return;
+                          const title = 'Vastu Shikhar Sphere';
+                          const labels = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+                          const centerX = wallCentroid ? wallCentroid.x : (baseImg?.width ? Math.round(baseImg.width/2) : 0);
+                          const centerY = wallCentroid ? wallCentroid.y : (baseImg?.height ? Math.round(baseImg.height/2) : 0);
+                          const northAngle = (northPos && centerX && centerY) ? Math.atan2(northPos.y - centerY, northPos.x - centerX) : 0;
+                          const toDirection = (x: number, y: number) => {
+                            const ang = Math.atan2(y - centerY, x - centerX);
+                            let rel = ang - northAngle;
+                            while (rel < 0) rel += Math.PI*2;
+                            while (rel >= Math.PI*2) rel -= Math.PI*2;
+                            const idx = Math.round(rel / ((Math.PI*2)/16)) % 16;
+                            return labels[idx];
+                          };
+                          const rows = areas.map(a => {
+                            const cx = a.rect.x + a.rect.w/2;
+                            const cy = a.rect.y + a.rect.h/2;
+                            const dir = northPos ? toDirection(cx, cy) : '-';
+                            return `<tr><td>${a.key}</td><td>${a.type}</td><td>${dir}</td></tr>`;
+                          }).join('');
+                          const css = `@page { size: A4 portrait; margin: 22mm; }
+                          *{box-sizing:border-box}
+                          body{font-family: 'Inter', 'Source Sans 3', ui-sans-serif, system-ui, Segoe UI, Roboto, Helvetica, Arial; color:#1C2534;}
+                          header{position:fixed;top:0;left:0;right:0;height:28mm;padding:8mm 0 4mm;border-bottom:1px solid #e5e7eb;}
+                          footer{position:fixed;bottom:0;left:0;right:0;height:14mm;padding:4mm 0;border-top:1px solid #f3f4f6;color:#6B7280;font-size:10px;}
+                          .container{max-width:170mm;margin:0 auto;}
+                          .logo{float:right;font-weight:700;color:#1E88E5}
+                          .title{font-weight:600;font-size:24px}
+                          .watermark{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);font-weight:800;color:#1C2534;opacity:.06;font-size:72px;pointer-events:none}
+                          h2{font-weight:600;font-size:18px;margin:16px 0 8px}
+                          .label{color:#6B7280;font-size:12px}
+                          .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+                          .counts{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+                          .card{border:1px solid #e5e7eb;border-radius:6px;padding:10px}
+                          .card .num{font-variant-numeric: tabular-nums; font-size:18px; font-weight:700;color:#1E88E5}
+                          .accent{height:3px;background:#1E88E5;margin-top:8px}
+                          .kicker{color:#6B7280;font-size:10px;letter-spacing:.06em;text-transform:uppercase}
+                          .page{page-break-after:always}
+                          .no-break{page-break-inside:avoid}
+                          .cards{display:flex;flex-direction:column;gap:10px;margin-top:8px}
+                          .card2{border:1px solid #e5e7eb;border-radius:8px;padding:12px}
+                          .h3{font-weight:600;font-size:16px;margin:2px 0 6px}
+                          .meta{color:#374151;font-size:12px;margin-bottom:6px}
+                          .subhead{margin-top:6px;color:#1E88E5;font-weight:600;font-size:12px}
+                          .ul{margin:4px 0 0 16px;padding:0}
+                          .ul li{margin:2px 0;}
+                          `;
+                          const now = new Date();
+                          const genAt = now.toLocaleString();
+                          const propertyName = 'Property Name';
+                          const counts = {
+                            Bedrooms: numBedrooms,
+                            Bathrooms: numBathrooms,
+                            Halls: numHalls,
+                            Kitchens: 0,
+                            Balconies: 0,
+                            'Store Rooms': 0,
+                            'Pooja Rooms': numPujaRooms,
+                            'Study Rooms': numStudyRooms,
+                            Parking: 0,
+                          } as const;
+                          const countsCards = Object.entries(counts).map(([k,v])=>`<div class=\"card\"><div class=\"num\">${v}</div><div class=\"label\">${k}</div></div>`).join('');
+                          const summaryRows = areas.map(a=>{
+                            const cx = a.rect.x + a.rect.w/2; const cy = a.rect.y + a.rect.h/2; const dir = northPos ? toDirection(cx,cy) : '-';
+                            let keyDir = '-';
+                            if (a.type === 'GasStove') keyDir = 'Hob';
+                            if (a.type === 'ToiletFixture') keyDir = 'WC';
+                            if (a.type === 'DiningTable') keyDir = 'Table';
+                            // guidance lookup
+                            const roomType = (function(){
+                              switch (a.type as AreaType) {
+                                case 'ToiletFixture': return 'toilet';
+                                case 'DiningTable': return 'dinning_hall';
+                                case 'Bedroom': return 'bedroom';
+                                case 'Bathroom': return 'toilet';
+                                case 'Hall': return (guidance['drawing_room']? 'drawing_room' : 'hall');
+                                case 'Study': return 'study_room';
+                                case 'Puja': return 'temple';
+                                case 'GasStove': return 'kitchen';
+                                // no default
+                              }
+                            })();
+                            const entry = roomType && dir && guidance[roomType] && guidance[roomType][dir] ? guidance[roomType][dir] : null;
+                            // We will not show zone/element if you don't need; keep for internal logic only
+                            const zone = entry ? entry.zone : '';
+                            const element = entry ? entry.element : '';
+                            const effectsList = (entry?.effect || []).map((t:string)=>`<li>${t}</li>`).join('');
+                            const remediesList = (entry?.remedies_primary || []).map((t:string)=>`<li>${t}</li>`).join('');
+                            return `
+                              <div class=\"card2 no-break\">
+                                <div class=\"kicker\">${String(a.type).toUpperCase()}</div>
+                                <div class=\"h3\">${a.key}</div>
+                                <div class=\"meta\">Direction: <strong>${dir}</strong></div>
+                                ${effectsList ? `<div class=\\"subhead\\">Effects</div><ul class=\\"ul\\">${effectsList}</ul>` : ''}
+                                ${remediesList ? `<div class=\\"subhead\\">Remedies</div><ul class=\\"ul\\">${remediesList}</ul>` : ''}
+                              </div>
+                            `;
+                          }).join('');
+                          const html = `<!doctype html><html><head><meta charset=\"utf-8\"/><title>${title}</title>
+                          <style>${css}</style></head><body>
+                          <header><div class=\"container\"><div class=\"title\">${title}</div><div class=\"logo\">${propertyName}</div></div></header>
+                          <footer><div class=\"container\"><div style=\"float:left\">Prepared by Vastu Shikhar</div><div style=\"float:right\" class=\"pages\"></div></div></footer>
+                          <div class=\"watermark\">VASTU SHIKHAR</div>
+                          <div class=\"container page\" style=\"margin-top:38mm\">
+                            <div class=\"title\">${title}</div>
+                            <div class=\"label\">Vastu report</div>
+                            <div class=\"accent\"></div>
+                            <div class=\"grid\" style=\"margin-top:10mm\">
+                              <div>
+                                <div class=\"label\">Property Name</div>
+                                <div>Property Name</div>
+                                <div class=\"label\" style=\"margin-top:4mm\">Address</div>
+                                <div>Address line</div>
+                                <div class=\"label\" style=\"margin-top:4mm\">Facing Direction</div>
+                                <div>${northPos ? 'Defined' : '-'}</div>
+                                <div class=\"label\" style=\"margin-top:4mm\">Plot Shape</div>
+                                <div>-</div>
+                                <div class=\"label\" style=\"margin-top:4mm\">Floors</div>
+                                <div>-</div>
+                              </div>
+                              <div>
+                                <div class=\"label\">Report ID</div>
+                                <div>${Math.random().toString(36).slice(2,10).toUpperCase()}</div>
+                                <div class=\"label\" style=\"margin-top:4mm\">Generated At</div>
+                                <div>${genAt}</div>
+                                <div class=\"label\" style=\"margin-top:4mm\">Prepared By</div>
+                                <div>Vastu Shikhar</div>
+                              </div>
+                            </div>
+                          </div>
+                          <div class=\"container page\">
+                            <h2>Overview & Counts</h2>
+                            <div class=\"grid\">
+                              <div>
+                                <div class=\"label\">Facing Direction</div>
+                                <div>${northPos ? 'Defined' : '-'}</div>
+                              </div>
+                              <div>
+                                <div class=\"label\">Plot Shape</div>
+                                <div>-</div>
+                              </div>
+                              <div>
+                                <div class=\"label\">Floor Count</div>
+                                <div>-</div>
+                              </div>
+                            </div>
+                            <div class=\"counts\" style=\"margin-top:8px\">${countsCards}</div>
+                          </div>
+                          <div class=\"container page\">
+                            <h2>Direction Summary by Space</h2>
+                            <div class=\"cards\">${summaryRows}</div>
+                          </div>
+                          <script>const pages = document.querySelectorAll('.page'); const footer=document.querySelector('.pages'); if(footer){footer.textContent='page 1 of '+(pages.length||1);} window.onload=()=>window.print()</script>
+                          </body></html>`;
+                          reportWin.document.open();
+                          reportWin.document.write(html);
+                          reportWin.document.close();
+                        }}
+                      >
+                        Get Report
+                      </button>
+                    </div>
                     </>
                   )}
                 </div>
@@ -757,8 +1066,8 @@ export const ImagePage: React.FC = () => {
                       setIsDraggingNorth(true);
                       return;
                     }
-                    // Stage 2 area interactions
-                    if (toolStage === 2 && areas.length > 0) {
+                    // Area interactions (enabled from stage 2 onwards)
+                    if (toolStage >= 2 && areas.length > 0) {
                       const a = hitTestArea(x, y);
                       if (a) {
                         setActiveAreaKey(a.key);
@@ -796,7 +1105,7 @@ export const ImagePage: React.FC = () => {
                       redraw();
                       return;
                     }
-                    if (toolStage === 2 && isAreaDragging && activeAreaKey) {
+                    if (toolStage >= 2 && isAreaDragging && activeAreaKey) {
                       setAreas(prev => prev.map(area => {
                         if (area.key !== activeAreaKey) return area;
                         const r = { ...area.rect };
@@ -852,16 +1161,25 @@ export const ImagePage: React.FC = () => {
                       if (octx) {
                         octx.clearRect(0, 0, overlay.width, overlay.height);
                       }
+                      // Draw wall points in the order they were clicked for feedback
                       redraw(next);
                       pushHistory();
                       if (next.length === 4) {
-                        const centroid = computePolygonCentroid(next);
+                        const ordered = orderPointsClockwise(next);
+                        const centroidA = computePolygonCentroid(ordered);
+                        let centroid = centroidA;
+                        if (!centroid) {
+                          // Fallback to average if area collapses to zero
+                          const avg = ordered.reduce((acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }), { x: 0, y: 0 });
+                          centroid = { x: Math.round(avg.x / 4), y: Math.round(avg.y / 4) };
+                        }
                         setWallCentroid(centroid);
                         setIsSelectingWall(false);
                         setShowCenter(true);
                         const octx2 = overlay.getContext('2d');
                         if (octx2) octx2.clearRect(0, 0, overlay.width, overlay.height);
-                        redraw(next);
+                        // Redraw using ordered points so subsequent logic is stable
+                        redraw(ordered);
                         pushHistory();
                       }
                       return;
