@@ -266,6 +266,7 @@ export const firestoreService = {
   // Add a new document
   async addDocument(collectionName: string, data: any): Promise<string> {
     try {
+      if (!db) throw new Error('Firebase is not configured. Please set VITE_FIREBASE_* env vars.');
       const docRef = await addDoc(collection(db, collectionName), {
         ...data,
         createdAt: new Date(),
@@ -280,6 +281,7 @@ export const firestoreService = {
   // Get a document
   async getDocument(collectionName: string, docId: string): Promise<any> {
     try {
+      if (!db) throw new Error('Firebase is not configured. Please set VITE_FIREBASE_* env vars.');
       const docRef = doc(db, collectionName, docId);
       const docSnap = await getDoc(docRef);
       
