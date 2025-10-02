@@ -564,34 +564,57 @@ export const ImagePage: React.FC = () => {
                       setProgressStage('wall');
                     }}
                     className="bg-gray-900 disabled:bg-gray-300 disabled:text-gray-600 hover:bg-black text-white px-3 py-2 rounded-lg font-medium transition-colors duration-200"
-                    title="Select 4 points to define wall"
+                    title="Click multiple points to define wall boundary"
                   >
                     Get Wall
                   </button>
                   
                   <button
-                    disabled={!hasImage || !((progressStage === 'wall' && wallCentroid) || progressStage === 'center')}
+                    disabled={!hasImage || !(progressStage === 'wall' && wallPoints.length >= 3)}
                     onClick={() => {
-                      if (!baseImg) return;
-                      let cx: number;
-                      let cy: number;
-                      if (wallCentroid) {
-                        cx = wallCentroid.x;
-                        cy = wallCentroid.y;
-                      } else {
-                        cx = Math.round(baseImg.width / 2);
-                        cy = Math.round(baseImg.height / 2);
+                      if (!baseImg || wallPoints.length < 3) return;
+                      // Calculate center from current wall points
+                      const ordered = orderPointsClockwise(wallPoints);
+                      const centroidA = computePolygonCentroid(ordered);
+                      let centroid = centroidA;
+                      if (!centroid) {
+                        // Fallback to average if area collapses to zero
+                        const avg = ordered.reduce((acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }), { x: 0, y: 0 });
+                        centroid = { x: Math.round(avg.x / ordered.length), y: Math.round(avg.y / ordered.length) };
                       }
-                      setInfo(`${baseImg.width}×${baseImg.height} • center=(${cx},${cy})`);
+                      setWallCentroid(centroid);
                       setShowCenter(true);
+                      setIsSelectingWall(false);
+                      setInfo(`${baseImg.width}×${baseImg.height} • center=(${centroid.x},${centroid.y}) • ${wallPoints.length} points`);
                       redraw();
                       setProgressStage('center');
                       setShowDirections(false);
                       pushHistory();
                     }}
                     className="bg-blue-600 disabled:bg-gray-300 disabled:text-gray-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg font-medium transition-colors duration-200"
+                    title="Calculate center from selected wall points (minimum 3 points required)"
                   >
-                    Find Image Center
+                    Get Center
+                  </button>
+                  <button
+                    disabled={!hasImage || !(progressStage === 'wall' && wallPoints.length > 0)}
+                    onClick={() => {
+                      setWallPoints([]);
+                      setWallCentroid(null);
+                      setShowCenter(false);
+                      const overlay = overlayCanvasRef.current;
+                      if (overlay) {
+                        const octx = overlay.getContext('2d');
+                        if (octx) octx.clearRect(0, 0, overlay.width, overlay.height);
+                      }
+                      redraw();
+                      setInfo('Wall points cleared. Click on the image to start selecting points again.');
+                      pushHistory();
+                    }}
+                    className="bg-red-600 disabled:bg-gray-300 disabled:text-gray-600 hover:bg-red-700 text-white px-3 py-2 rounded-lg font-medium transition-colors duration-200"
+                    title="Clear all selected wall points"
+                  >
+                    Clear Points
                   </button>
                   <button
                     disabled={!hasImage || progressStage !== 'center'}
@@ -1129,25 +1152,8 @@ export const ImagePage: React.FC = () => {
                       }
                       // Draw wall points in the order they were clicked for feedback
                       redraw(next);
+                      setInfo(`${next.length} points selected. Click "Get Center" when ready (minimum 3 points required).`);
                       pushHistory();
-                      if (next.length === 4) {
-                        const ordered = orderPointsClockwise(next);
-                        const centroidA = computePolygonCentroid(ordered);
-                        let centroid = centroidA;
-                        if (!centroid) {
-                          // Fallback to average if area collapses to zero
-                          const avg = ordered.reduce((acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }), { x: 0, y: 0 });
-                          centroid = { x: Math.round(avg.x / 4), y: Math.round(avg.y / 4) };
-                        }
-                        setWallCentroid(centroid);
-                        setIsSelectingWall(false);
-                        setShowCenter(true);
-                        const octx2 = overlay.getContext('2d');
-                        if (octx2) octx2.clearRect(0, 0, overlay.width, overlay.height);
-                        // Redraw using ordered points so subsequent logic is stable
-                        redraw(ordered);
-                        pushHistory();
-                      }
                       return;
                     }
                     if (!annotateOn) return;
